@@ -1,0 +1,30 @@
+name: Monitoreo Metro Santiago
+
+on:
+  schedule:
+    # Corre cada 10 minutos. La sintaxis cron usa UTC, no hora Chile.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    # Esto permite correrlo manualmente desde la pestaña "Actions" de GitHub,
+    # útil para probar sin esperar al cron.
+
+jobs:
+  consultar-metro:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar script de monitoreo
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python metro_completo.py
