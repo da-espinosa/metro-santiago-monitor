@@ -21,6 +21,13 @@ Estructura confirmada de la respuesta de la API:
                 ├── reason
                 └── is_closed_by_schedule
 
+Requisitos:
+    pip install requests supabase
+
+Antes de correr, configurá las variables de entorno SUPABASE_URL y
+SUPABASE_KEY (nunca las escribas directamente en este archivo).
+Localmente podés exportarlas en la terminal; en GitHub Actions se
+configuran como "Secrets" del repositorio.
 """
 
 import os
@@ -40,12 +47,43 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Error: faltan las variables de entorno SUPABASE_URL y/o SUPABASE_KEY.")
-    print("Configuralas antes de correr el script (ver README).")
+    print("[ERROR] faltan las variables de entorno SUPABASE_URL y/o SUPABASE_KEY.")
+    print("   Configuralas antes de correr el script (ver README).")
     sys.exit(1)
 
 METRO_API_URL = "https://api.xor.cl/red/metro-network"
 TZ_CHILE = ZoneInfo("America/Santiago")
+
+# Horario real de operación del Metro de Santiago (hora Chile).
+# Fuente: viajarxchile.cl (confirmar periódicamente, puede cambiar).
+# NOTA: no contempla feriados especiales por ahora — Metro suele operar
+# domingos/feriados con horario reducido. Se podría afinar en fase 2
+# consultando la API de feriados de gob.cl.
+HORARIO_OPERACION = {
+    # weekday(): 0=lunes ... 5=sábado, 6=domingo
+    0: ("06:00", "23:00"),  # lunes
+    1: ("06:00", "23:00"),  # martes
+    2: ("06:00", "23:00"),  # miércoles
+    3: ("06:00", "23:00"),  # jueves
+    4: ("06:00", "23:00"),  # viernes
+    5: ("06:30", "23:00"),  # sábado
+    6: ("07:30", "23:00"),  # domingo (mismo horario asumido para feriados)
+}
+
+
+def esta_en_horario_operacion(ahora_chile: datetime) -> bool:
+    """
+    Determina si el Metro debería estar operando ahora mismo,
+    según el horario habitual por día de la semana.
+    """
+    apertura_str, cierre_str = HORARIO_OPERACION[ahora_chile.weekday()]
+    apertura = ahora_chile.replace(
+        hour=int(apertura_str[:2]), minute=int(apertura_str[3:]), second=0, microsecond=0
+    )
+    cierre = ahora_chile.replace(
+        hour=int(cierre_str[:2]), minute=int(cierre_str[3:]), second=0, microsecond=0
+    )
+    return apertura <= ahora_chile <= cierre
 
 
 def parse_api_time_to_chile(time_str: str) -> str:
@@ -112,17 +150,17 @@ def parse_status(data: dict) -> dict:
 
 def print_summary(parsed: dict):
     """Imprime un resumen legible en consola."""
-    print(f"\n Consultado:       {parsed['timestamp_consulta']}")
-    print(f"Hora API (UTC):   {parsed['timestamp_api_utc']}")
-    print(f"Hora API (Chile): {parsed['timestamp_api_chile']}")
+    print(f"\n[INFO] Consultado:       {parsed['timestamp_consulta']}")
+    print(f"[INFO] Hora API (UTC):   {parsed['timestamp_api_utc']}")
+    print(f"[INFO] Hora API (Chile): {parsed['timestamp_api_chile']}")
 
     if parsed["red_ok"]:
-        print("\n Toda la Red de Metro está funcionando con normalidad.")
+        print("\n[OK] Toda la Red de Metro está funcionando con normalidad.")
         return
 
-    print(f"\n  Se detectaron problemas en {len(parsed['lineas_con_problemas'])} línea(s):\n")
+    print(f"\n[ALERTA] Se detectaron problemas en {len(parsed['lineas_con_problemas'])} línea(s):\n")
     for linea in parsed["lineas_con_problemas"]:
-        print(f"   {linea['linea_nombre']} (id: {linea['linea_id']})")
+        print(f"  - Linea: {linea['linea_nombre']} (id: {linea['linea_id']})")
         for est in linea["estaciones_afectadas"]:
             print(f"     - {est['nombre']}: {est['descripcion'] or est['razon'] or 'sin detalle'}")
         print()
@@ -142,7 +180,7 @@ def guardar_en_supabase(supabase: Client, data: dict) -> int:
     }).execute()
 
     snapshot_id = snapshot_result.data[0]["id"]
-    print(f"Snapshot #{snapshot_id} guardado en Supabase (red_ok={red_ok})")
+    print(f"[INFO] Snapshot #{snapshot_id} guardado en Supabase (red_ok={red_ok})")
 
     # 2. Si hay incidentes, los insertamos relacionados a ese snapshot
     incidentes_a_insertar = []
@@ -162,14 +200,23 @@ def guardar_en_supabase(supabase: Client, data: dict) -> int:
 
     if incidentes_a_insertar:
         supabase.table("incidentes_estacion").insert(incidentes_a_insertar).execute()
-        print(f"  {len(incidentes_a_insertar)} incidente(s) guardado(s) en Supabase")
+        print(f"[ALERTA] {len(incidentes_a_insertar)} incidente(s) guardado(s) en Supabase")
     else:
-        print("Sin incidentes que registrar en Supabase")
+        print("[OK] Sin incidentes que registrar en Supabase")
 
     return snapshot_id
 
 
 def main():
+    ahora_chile = datetime.now(TZ_CHILE)
+
+    if not esta_en_horario_operacion(ahora_chile):
+        print(
+            f"[INFO] {ahora_chile.strftime('%Y-%m-%d %H:%M')} (Chile) está fuera del "
+            f"horario de operación del Metro. No se consulta la API ni se guarda nada."
+        )
+        return
+
     print(f"Consultando {METRO_API_URL} ...")
 
     try:
@@ -185,24 +232,24 @@ def main():
             json.dump(data, f, indent=2, ensure_ascii=False)
         with open("metro_status_parsed.json", "w", encoding="utf-8") as f:
             json.dump(parsed, f, indent=2, ensure_ascii=False)
-        print("Guardado local: metro_status_raw.json y metro_status_parsed.json")
+        print("[INFO] Guardado local: metro_status_raw.json y metro_status_parsed.json")
 
         # 4. Lo guardamos en Supabase
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         guardar_en_supabase(supabase, data)
 
-        print("\n Proceso completado.")
+        print("\n[OK] Proceso completado.")
 
     except requests.exceptions.Timeout:
-        print("Error: la API del Metro no respondió a tiempo (timeout).")
+        print("[ERROR] la API del Metro no respondió a tiempo (timeout).")
     except requests.exceptions.HTTPError as e:
-        print(f"Error HTTP consultando la API del Metro: {e}")
+        print(f"[ERROR HTTP] consultando la API del Metro: {e}")
     except requests.exceptions.RequestException as e:
-        print(f"Error de conexión con la API del Metro: {e}")
+        print(f"[ERROR CONEXION] con la API del Metro: {e}")
     except json.JSONDecodeError:
-        print("La respuesta de la API no es un JSON válido.")
+        print("[ERROR] de la API no es un JSON válido.")
     except Exception as e:
-        print(f"Error guardando en Supabase: {e}")
+        print(f"[ERROR] en Supabase: {e}")
 
 
 if __name__ == "__main__":
