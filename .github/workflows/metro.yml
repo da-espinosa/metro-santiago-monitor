@@ -2,12 +2,22 @@ name: Monitoreo Metro Santiago
 
 on:
   schedule:
-    # Corre cada 10 minutos, pero SOLO en horario de operación del Metro
-    # (aprox. 6:00 a 23:00 hora Chile). El cron usa UTC, así que:
+    # Corre cada 10 minutos (con offset de 2 min para evitar la congestión
+    # de los crons "redondos" que todo el mundo usa en el minuto 0,10,20...),
+    # solo en horario de operación del Metro (aprox. 6:00 a 23:00 hora Chile).
+    # Decidimos 10 min (no 5) para no sobrecargar la API comunitaria de
+    # terceros: confirmamos con los headers HTTP (cf-cache-status: DYNAMIC)
+    # que cada consulta genera trabajo real de scraping en el origen, sin
+    # caché de por medio.
+    # El cron usa UTC, así que:
     #   6:00 Chile  = 10:00 UTC
     #   23:00 Chile = 03:00 UTC (del día siguiente)
-    # Por eso el rango de horas queda "10-23,0-3" (cruza medianoche UTC).
-    - cron: "*/10 10-23,0-3 * * *"
+    # La última ejecución útil es la de la hora "2 UTC" (22:xx Chile);
+    # no incluimos la hora "3 UTC" porque todos sus minutos (23:02 a 23:52
+    # Chile) caen DESPUÉS del cierre real a las 23:00 -- el script igual
+    # se auto-cancela si corriera fuera de horario, pero así evitamos
+    # ejecuciones innecesarias desde el origen.
+    - cron: "2,12,22,32,42,52 10-23,0-2 * * *"
   workflow_dispatch:
     # Esto permite correrlo manualmente desde la pestaña "Actions" de GitHub,
     # útil para probar sin esperar al cron.
