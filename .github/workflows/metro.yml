@@ -2,8 +2,12 @@ name: Monitoreo Metro Santiago
 
 on:
   schedule:
-    # Corre cada 10 minutos. La sintaxis cron usa UTC, no hora Chile.
-    - cron: "*/10 * * * *"
+    # Corre cada 10 minutos, pero SOLO en horario de operación del Metro
+    # (aprox. 6:00 a 23:00 hora Chile). El cron usa UTC, así que:
+    #   6:00 Chile  = 10:00 UTC
+    #   23:00 Chile = 03:00 UTC (del día siguiente)
+    # Por eso el rango de horas queda "10-23,0-3" (cruza medianoche UTC).
+    - cron: "*/10 10-23,0-3 * * *"
   workflow_dispatch:
     # Esto permite correrlo manualmente desde la pestaña "Actions" de GitHub,
     # útil para probar sin esperar al cron.
